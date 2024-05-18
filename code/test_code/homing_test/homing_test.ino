@@ -11,7 +11,7 @@ const int encoderPinB = 10; // Encoder channel B
 
 // Variables for the encoder counts
 volatile long encoderCounts = 0;
-long targetCounts = 800;
+long targetCounts = 2000;
 
 void setup() {
   // Initialize motor control pins
