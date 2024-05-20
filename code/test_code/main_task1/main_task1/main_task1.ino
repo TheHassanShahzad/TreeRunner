@@ -1,4 +1,5 @@
 #include <Servo.h>
+#include "Adafruit_VL53L0X.h"
 
 // Define servo objects
 Servo top_gripper;
@@ -25,7 +26,11 @@ const int encoderPinB = 10; // Encoder channel B
 
 // Variables for the encoder counts
 volatile long encoderCounts = 0;
-const long targetCounts = 2000; // Number of counts to move down after the switch is clicked
+const long targetCounts = 2000; // Number of counts to move up or down
+
+// Time of Flight sensor
+Adafruit_VL53L0X lox = Adafruit_VL53L0X();
+const int distanceThreshold = 50; // Distance threshold in mm to detect the canopy
 
 void setup() {
   // Attach the servo objects to their respective pins
@@ -47,32 +52,80 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(encoderPinA), encoderAChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(encoderPinB), encoderBChange, CHANGE);
 
-  // Start serial communication for debugging
-  Serial.begin(9600);
+  // Initialize serial communication
+  Serial.begin(115200);
+  
+  // Initialize the Time of Flight sensor
+  if (!lox.begin()) {
+    Serial.println(F("Failed to boot VL53L0X"));
+    while (1);
+  }
+  
+  Serial.println(F("VL53L0X API Simple Ranging example\n\n"));
 }
 
 void loop() {
-  // Open bottom gripper
+  // Read the Time of Flight sensor
+  VL53L0X_RangingMeasurementData_t measure;
+  lox.rangingTest(&measure, false);
+
+  // Print the distance to the serial monitor
+  if (measure.RangeStatus != 4) {
+    Serial.print("Distance (mm): ");
+    Serial.println(measure.RangeMilliMeter);
+  } else {
+    Serial.println("Out of range");
+  }
+
+  // Check if the distance is very small, indicating the canopy is reached
+  if (measure.RangeMilliMeter < distanceThreshold) {
+    // Start the sequence to climb down
+    climbDownSequence();
+  } else {
+    // Start the sequence to climb up
+    climbUpSequence();
+  }
+
+  delay(100); // Small delay to prevent excessive serial output
+}
+
+// Function to climb up
+void climbUpSequence() {
   openBottomGripper();
   delay(1000); // Wait for the gripper to open
 
-  // Move the bottom arm up until the switch clicks, then move it down by a certain number of turns
   moveBottomArmUpUntilSwitch();
   moveBottomArmDownByCounts(targetCounts);
 
-  // Close bottom gripper
   closeBottomGripper();
   delay(1000); // Wait for the gripper to close
 
-  // Open top gripper
   openTopGripper();
   delay(1000); // Wait for the gripper to open
 
-  // Move the top arm up by a certain number of turns
   moveTopArmUpByCounts(targetCounts);
 
-  // Close top gripper
   closeTopGripper();
+  delay(1000); // Wait for the gripper to close
+}
+
+// Function to climb down
+void climbDownSequence() {
+  openTopGripper();
+  delay(1000); // Wait for the gripper to open
+
+  moveTopArmDownUntilSwitch();
+  moveTopArmUpByCounts(targetCounts);
+
+  closeTopGripper();
+  delay(1000); // Wait for the gripper to close
+
+  openBottomGripper();
+  delay(1000); // Wait for the gripper to open
+
+  moveBottomArmDownByCounts(targetCounts);
+
+  closeBottomGripper();
   delay(1000); // Wait for the gripper to close
 }
 
@@ -96,6 +149,35 @@ void closeTopGripper() {
   top_gripper.write(closePosition);
 }
 
+// Function to move the top arm down until the switch is clicked
+void moveTopArmDownUntilSwitch() {
+  startMotorBackward();
+  while (digitalRead(switchPin) == HIGH) {
+    // Do nothing and wait for the switch to be pressed
+  }
+  stopMotor();
+}
+
+// Function to move the top arm up by a certain number of encoder counts
+void moveTopArmUpByCounts(long counts) {
+  encoderCounts = 0;
+  startMotorForward();
+  while (encoderCounts < counts) {
+    // Do nothing and wait for the counts to reach the target
+  }
+  stopMotor();
+}
+
+// Function to move the bottom arm down by a certain number of encoder counts
+void moveBottomArmDownByCounts(long counts) {
+  encoderCounts = 0;
+  startMotorBackward();
+  while (encoderCounts < counts) {
+    // Do nothing and wait for the counts to reach the target
+  }
+  stopMotor();
+}
+
 // Function to move the bottom arm up until the switch is clicked
 void moveBottomArmUpUntilSwitch() {
   startMotorForward();
@@ -104,26 +186,6 @@ void moveBottomArmUpUntilSwitch() {
   }
   stopMotor();
 }
-
-// Function to move the bottom arm down by a certain number of encoder counts
-// void moveBottomArmDownByCounts(long counts) {
-//   encoderCounts = 0;
-//   startMotorBackward();
-//   while (encoderCounts < counts) {
-//     // Do nothing and wait for the counts to reach the target
-//   }
-//   stopMotor();
-// }
-
-// Function to move the top arm up by a certain number of encoder counts
-// void moveTopArmUpByCounts(long counts) {
-//   encoderCounts = 0;
-//   startMotorForward();
-//   while (encoderCounts < counts) {
-//     // Do nothing and wait for the counts to reach the target
-//   }
-//   stopMotor();
-// }
 
 // Motor control functions
 void startMotorForward() {
@@ -141,19 +203,19 @@ void stopMotor() {
   digitalWrite(motorPin2, LOW);
 }
 
-// // Encoder interrupt service routines
-// void encoderAChange() {
-//   if (digitalRead(encoderPinA) == digitalRead(encoderPinB)) {
-//     encoderCounts++;
-//   } else {
-//     encoderCounts--;
-//   }
-// }
+// Encoder interrupt service routines
+void encoderAChange() {
+  if (digitalRead(encoderPinA) == digitalRead(encoderPinB)) {
+    encoderCounts++;
+  } else {
+    encoderCounts--;
+  }
+}
 
-// void encoderBChange() {
-//   if (digitalRead(encoderPinA) != digitalRead(encoderPinB)) {
-//     encoderCounts++;
-//   } else {
-//     encoderCounts--;
-//   }
-// }
+void encoderBChange() {
+  if (digitalRead(encoderPinA) != digitalRead(encoderPinB)) {
+    encoderCounts++;
+  } else {
+    encoderCounts--;
+  }
+}
